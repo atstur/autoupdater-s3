@@ -1,0 +1,105 @@
+const props = PropertiesService.getScriptProperties();
+const BUCKET = 'my-bucket';                      // имя бакета в облаке
+const REGION = 'ru-central1';                   // регион (обычно ru-central1)
+const ACCESS_KEY = props.getProperty('ACCESS_KEY');         // Access Key ID из сервисного аккаунта в облаке
+const SECRET_KEY = props.getProperty('SECRET_KEY');
+const FILE_NAME = 'data.csv';
+const SHEET_NAME = 'my-list';                     // имя листа (например, 'Sheet1' или 'Лист1'
+const TABLE_ID = props.getProperty('TABLE_ID');             // ID Google Таблицы
+
+function getCSVString() {
+  const ss = SpreadsheetApp.openById(TABLE_ID);
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  return data.map(row => row.map(cell => {
+    if (typeof cell === 'string') {
+      return '"' + cell.replace(/"/g, '""') + '"';
+    }
+    return cell;
+  }).join(',')).join('\n');
+}
+
+function toBytes(str) {
+  return Utilities.newBlob(str).getBytes();
+}
+
+function sha256Hex(dataBytes) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, dataBytes)
+    .map(e => ('0' + (e < 0 ? e + 256 : e).toString(16)).slice(-2)).join('');
+}
+
+function hmacSHA256(dataBytes, keyBytes) {
+  return Utilities.computeHmacSignature(Utilities.MacAlgorithm.HMAC_SHA_256, dataBytes, keyBytes);
+}
+
+function signRequest(method, url, region, service, payloadBytes, accessKey, secretKey, amzDate, dateStamp) {
+  const canonicalUri = '/' + url.split('/').slice(3).join('/');
+  const canonicalQuerystring = '';
+  const payloadHash = sha256Hex(payloadBytes);
+  const canonicalHeaders = 'host:' + url.split('/')[2] + '\n' +
+                           'x-amz-content-sha256:' + payloadHash + '\n' +
+                           'x-amz-date:' + amzDate + '\n';
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = method + '\n' + canonicalUri + '\n' + canonicalQuerystring + '\n' +
+                           canonicalHeaders + '\n' + signedHeaders + '\n' + payloadHash;
+  const credentialScope = dateStamp + '/' + region + '/' + service + '/aws4_request';
+  const canonicalRequestHash = sha256Hex(toBytes(canonicalRequest));
+  const stringToSign = 'AWS4-HMAC-SHA256\n' + amzDate + '\n' + credentialScope + '\n' + canonicalRequestHash;
+
+  const kDate = hmacSHA256(toBytes(dateStamp), toBytes('AWS4' + secretKey));
+  const kRegion = hmacSHA256(toBytes(region), kDate);
+  const kService = hmacSHA256(toBytes(service), kRegion);
+  const kSigning = hmacSHA256(toBytes('aws4_request'), kService);
+  const signature = hmacSHA256(toBytes(stringToSign), kSigning)
+    .map(e => ('0' + (e < 0 ? e + 256 : e).toString(16)).slice(-2)).join('');
+
+  return 'AWS4-HMAC-SHA256 Credential=' + accessKey + '/' + credentialScope +
+         ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
+}
+
+function uploadToYandex() {
+  const csvString = getCSVString();
+  // Добавляем BOM (EF BB BF) для корректного отображения кириллицы в Excel
+  const bom = [0xEF, 0xBB, 0xBF];
+  const csvBytes = bom.concat(toBytes(csvString)); // байты с BOM
+
+  const now = new Date();
+  const amzDate = Utilities.formatDate(now, 'UTC', "yyyyMMdd'T'HHmmss'Z'");
+  const dateStamp = Utilities.formatDate(now, 'UTC', 'yyyyMMdd');
+  const url = 'https://storage.yandexcloud.net/' + BUCKET + '/' + FILE_NAME;
+
+  const authorization = signRequest('PUT', url, REGION, 's3', csvBytes, ACCESS_KEY, SECRET_KEY, amzDate, dateStamp);
+  const headers = {
+    'Authorization': authorization,
+    'x-amz-date': amzDate,
+    'x-amz-content-sha256': sha256Hex(csvBytes),
+    'Content-Type': 'text/csv; charset=utf-8',
+  };
+
+  const options = {
+    method: 'PUT',
+    headers: headers,
+    payload: csvBytes,
+    contentType: 'text/csv; charset=utf-8',
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  if (response.getResponseCode() == 200) {
+    console.log('CSV успешно загружен в Yandex Object Storage');
+  } else {
+    console.error('Ошибка загрузки: ' + response.getContentText());
+  }
+}
+
+function onEdit(e) {
+  PropertiesService.getScriptProperties().setProperty('changed', 'true');
+}
+
+function syncIfChanged() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('changed') === 'true') {
+    uploadToYandex();
+    props.setProperty('changed', 'false');
+  }
+}

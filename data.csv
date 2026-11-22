@@ -1,0 +1,8 @@
+type;image;title;description;detail_text;phone;email;logo;lat;lon;zoom;address;;;;;
+config;;;;;7952123456;example@gmail.com;https://i.ibb.co/logo.png;56.999999;47.999999;12;улица Примерная, 53, Чебоксары;;;;;
+product;https://i.ibb.co/example.webp;название;текст текст текст текст текст текст;текст поменьше;;;;;;;;;;;;
+product;https://i.ibb.co/example.webp;название;текст текст текст текст текст текст текст текст текст текст текст текст;;;;;;;;;;;;;
+text;;;блок текста;;;;;;;;;;;;;
+product;https://i.ibb.co/example.webp;название;текст текст;текст поменьше;;;;;;;;;;;;
+product;https://i.ibb.co/example.webp;название;текст текст;текст поменьше;;;;;;;;;;;;
+text;;;блок текста;;;;;;;;;;;;;
